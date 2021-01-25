@@ -41,6 +41,7 @@ class Network {
         Network(int dimsLen, int * neuronCountList);
         // Initializes all the variables that aren't in the constructor, also used in read();
         void initAll();
+        float lazyLog(float num);
         // Randomizes all the weights and biases
         void randomize();
         // Loads the needed files to the GPU, preparing for a feedforward.
