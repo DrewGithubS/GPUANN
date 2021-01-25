@@ -1,5 +1,6 @@
-#include<iostream>
-#include<cstdlib>
+#include <iostream>
+#include <cstdlib>
+#include "NeuralNetwork.cudah"
 
 __global__ void feedForwardLayer(float * values, float * biases, float * weights, int * dims, int * sumDims, int * sumWeights, int currentLayer) {
     /* This gets the 'index' of the thread. The thread id is the id of the thread in the thread block
@@ -19,207 +20,199 @@ __global__ void feedForwardLayer(float * values, float * biases, float * weights
     }
 }
 
+Network::Network() {
+    read();
+};
 
-class Network {
-    public:
-        int THREADSPERBLOCK = 1024;
-        bool loaded = false;
-        float * biases;
-        float * weights;
-        int * dims;
-        int * weightDims;
-        int * sumDims;
-        int * sumWeights;
-        int dimsLength;
-        int totalNNSize = 0;
-        int totalWeights = 0;
+Network::Network(int dimsLen, int * neuronCountList) {
+    // Sets dims and dimsLength
+    dimsLength = dimsLen;
+    dims = (int *) malloc(dimsLength * sizeof(int));
+    for(int layer = 0; layer < dimsLength; layer++) {
+        dims[layer] = neuronCountList[layer];
+    }
+    initAll();
+};
 
-        float * deviceBiases;
-        float * deviceWeights;
-        int * deviceDims;
-        int * deviceSumDims;
-        int * deviceSumWeights;        
+void Network::initAll() {
+    // Gets the total size of the network.
+    for(int layer = 0; layer < dimsLength; layer++) {
+        totalNNSize += dims[layer];
+    }
 
-        // Even though this could probably be made to run faster, this is branchless and clear.
-        Network(int dimsLen, int * neuronCountList) {
-            // Sets dims and dimsLength
-            dimsLength = dimsLen;
-            dims = (int *) malloc(dimsLength * sizeof(int));
-            for(int layer = 0; layer < dimsLength; layer++) {
-                dims[layer] = neuronCountList[layer];
+    // Gets the total amount of weights, and the amount of weights per layer
+    weightDims = (int *) malloc((dimsLength) * sizeof(int));
+    weightDims[dimsLength-1] = 0;
+    for(int layer = 0; layer < dimsLength-1; layer++) {
+        weightDims[layer] = dims[layer] * dims[layer+1];
+        totalWeights += weightDims[layer];
+    }
+
+    // Gets the amount of weights from the 0th weight for each layer
+    sumWeights = (int *) malloc((dimsLength) * sizeof(int));
+    sumWeights[0] = 0;
+    sumWeights[1] = weightDims[0];
+    for(int layer = 1; layer < dimsLength-1; layer++) {
+        sumWeights[layer+1] = weightDims[layer] + weightDims[layer+1];
+    }
+
+    // Gets the amount of neuron from the 0th neuron for each layer
+    sumDims = (int *) malloc((dimsLength+1) * sizeof(int));
+    sumDims[0] = 0;
+    sumDims[1] = dims[0];
+    for(int layer = 0; layer < dimsLength; layer++) {
+        sumDims[layer+2] = sumDims[layer] + dims[layer+1];
+    }
+
+    // Initializes the weights and biases with a value of 0.
+    biases = (float *) calloc(totalNNSize, sizeof(float));
+    weights = (float *) calloc(totalWeights, sizeof(float));
+};
+void Network::randomize() {
+
+};
+void Network::loadNetworkToGPU() {
+    cudaMalloc(&deviceBiases, totalNNSize * sizeof(float));
+    cudaMalloc(&deviceWeights, totalWeights * sizeof(float));
+    cudaMalloc(&deviceDims, dimsLength * sizeof(int));
+    cudaMalloc(&deviceSumDims, (dimsLength+1) * sizeof(int));
+    cudaMalloc(&deviceSumWeights, dimsLength * sizeof(int));
+
+    cudaMemcpy(deviceBiases, biases, totalNNSize * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceWeights, weights, totalWeights * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceDims, dims, dimsLength * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceSumDims, sumDims, (dimsLength+1) * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(deviceSumWeights, sumWeights, dimsLength * sizeof(int), cudaMemcpyHostToDevice);
+    loaded = true;
+};
+float * Network::feedForward(float input[]) {
+    // Creates a new, empty value array.
+    float * values = (float *) calloc(totalNNSize, sizeof(float));
+
+    // Puts the inputs into the values to be fed forward.
+    for(int neuron = 0; neuron < dims[0]; neuron++) {
+        values[neuron] = input[neuron];
+    }
+    
+    // Allocates device memory for the values
+    float * deviceValues;
+    cudaMalloc(&deviceValues, totalNNSize * sizeof(float));
+    cudaMemcpy(deviceValues, values, totalNNSize * sizeof(float), cudaMemcpyHostToDevice);
+
+    // For each layer, feed forward using a GPU thread instead of a for loop.
+    for(int layer = 1; layer < dimsLength; layer++) {
+        /* Serial Method to feedforward
+        for(int neuron = 0; neuron < dims[layer]; neuron++) {
+            for(int subNeuron = sumDims[layer-1]; subNeuron < sumDims[layer]; subNeuron++) {
+                values[sumDims[layer] + neuron] += values[sumDims[layer-1] + subNeuron] * weights[sumWeights[layer-1] + dims[layer]*subNeuron + neuron];
             }
-            initAll();
-        };
-        void initAll() {
-            // Gets the total size of the network.
-            for(int layer = 0; layer < dimsLength; layer++) {
-                totalNNSize += dims[layer];
-            }
-
-            // Gets the total amount of weights, and the amount of weights per layer
-            weightDims = (int *) malloc((dimsLength) * sizeof(int));
-            weightDims[dimsLength-1] = 0;
-            for(int layer = 0; layer < dimsLength-1; layer++) {
-                weightDims[layer] = dims[layer] * dims[layer+1];
-                totalWeights += weightDims[layer];
-            }
-
-            // Gets the amount of weights from the 0th weight for each layer
-            sumWeights = (int *) malloc((dimsLength) * sizeof(int));
-            sumWeights[0] = 0;
-            sumWeights[1] = weightDims[0];
-            for(int layer = 1; layer < dimsLength-1; layer++) {
-                sumWeights[layer+1] = weightDims[layer] + weightDims[layer+1];
-            }
-
-            // Gets the amount of neuron from the 0th neuron for each layer
-            sumDims = (int *) malloc((dimsLength+1) * sizeof(int));
-            sumDims[0] = 0;
-            sumDims[1] = dims[0];
-            for(int layer = 0; layer < dimsLength; layer++) {
-                sumDims[layer+2] = sumDims[layer] + dims[layer+1];
-            }
-
-            // Initializes the weights and biases with a value of 0.
-            biases = (float *) calloc(totalNNSize, sizeof(float));
-            weights = (float *) calloc(totalWeights, sizeof(float));
         }
-        void loadNetworkToGPU() {
-            cudaMalloc(&deviceBiases, totalNNSize * sizeof(float));
-            cudaMalloc(&deviceWeights, totalWeights * sizeof(float));
-            cudaMalloc(&deviceDims, dimsLength * sizeof(int));
-            cudaMalloc(&deviceSumDims, (dimsLength+1) * sizeof(int));
-            cudaMalloc(&deviceSumWeights, dimsLength * sizeof(int));
+        */
+        int dimBlock = THREADSPERBLOCK;
+        int dimGrid = (dims[layer] + THREADSPERBLOCK - 1)/THREADSPERBLOCK;
+        feedForwardLayer <<< dimGrid, dimBlock >>> (deviceValues, deviceBiases, deviceWeights, deviceDims, deviceSumDims, deviceSumWeights, layer);
+    }
 
-            cudaMemcpy(deviceBiases, biases, totalNNSize * sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(deviceWeights, weights, totalWeights * sizeof(float), cudaMemcpyHostToDevice);
-            cudaMemcpy(deviceDims, dims, dimsLength * sizeof(int), cudaMemcpyHostToDevice);
-            cudaMemcpy(deviceSumDims, sumDims, (dimsLength+1) * sizeof(int), cudaMemcpyHostToDevice);
-            cudaMemcpy(deviceSumWeights, sumWeights, dimsLength * sizeof(int), cudaMemcpyHostToDevice);
-            loaded = true;
-        }
-        float * feedForward(float input[]) {
-            // Creates a new, empty value array.
-            float * values = (float *) calloc(totalNNSize, sizeof(float));
-
-            // Puts the inputs into the values to be fed forward.
-            for(int neuron = 0; neuron < dims[0]; neuron++) {
-                values[neuron] = input[neuron];
-            }
-            
-            // Allocates device memory for the values
-            float * deviceValues;
-            cudaMalloc(&deviceValues, totalNNSize * sizeof(float));
-            cudaMemcpy(deviceValues, values, totalNNSize * sizeof(float), cudaMemcpyHostToDevice);
-
-            // For each layer, feed forward using a GPU thread instead of a for loop.
-            for(int layer = 1; layer < dimsLength; layer++) {
-                /* Serial Method to feedforward
-                for(int neuron = 0; neuron < dims[layer]; neuron++) {
-                    for(int subNeuron = sumDims[layer-1]; subNeuron < sumDims[layer]; subNeuron++) {
-                        values[sumDims[layer] + neuron] += values[sumDims[layer-1] + subNeuron] * weights[sumWeights[layer-1] + dims[layer]*subNeuron + neuron];
-                    }
-                }
-                */
-                int dimBlock = THREADSPERBLOCK;
-                int dimGrid = (dims[layer] + THREADSPERBLOCK - 1)/THREADSPERBLOCK;
-                feedForwardLayer <<< dimGrid, dimBlock >>> (deviceValues, deviceBiases, deviceWeights, deviceDims, deviceSumDims, deviceSumWeights, layer);
-            }
-
-            cudaMemcpy(values, deviceValues, totalNNSize * sizeof(float), cudaMemcpyDeviceToHost);
-            cudaFree(deviceValues);
-            return values;
-        }
-        void unloadNetworkFromGPU() {
-            cudaFree(deviceBiases);
-            cudaFree(deviceWeights);
-            cudaFree(deviceDims);
-            cudaFree(deviceSumDims);
-            cudaFree(deviceSumWeights);
-            loaded = false;
-        }
-        ~Network() {
-            free(biases);
-            free(weights);
-            free(dims);
-            free(weightDims);
-            free(sumDims);
-            free(sumWeights);
-            if(!loaded) {
-                unloadNetworkFromGPU();
-            }
-        };
-        void print() {
-            for(int layer = 0; layer < dimsLength; layer++) {
-                std::cout << "Layer " << layer+1 << ":" << std::endl;
-                for(int neuron = 0; neuron < dims[layer]; neuron++) {
-                    std::cout << "\tNeuron " << neuron+1 << ":" << std::endl;
-                    std::cout << "\t\tBias: " << biases[sumDims[layer] + neuron] << ":" << std::endl;
-                    if(layer < (dimsLength-1)) {
-                        std::cout << "\t\tWeights: " << std::endl;
-                        for(int weight = 0; weight < dims[layer+1]; weight++) {
-                            std::cout << "\t\t\tWeight " << weight+1 << ": " << weights[sumWeights[layer] + dims[layer+1]*neuron + weight] << ":" << std::endl;
-                        }
-                    }
+    cudaMemcpy(values, deviceValues, totalNNSize * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(deviceValues);
+    return values;
+};
+void Network::unloadNetworkFromGPU() {
+    cudaFree(deviceBiases);
+    cudaFree(deviceWeights);
+    cudaFree(deviceDims);
+    cudaFree(deviceSumDims);
+    cudaFree(deviceSumWeights);
+    loaded = false;
+};
+Network::~Network() {
+    free(biases);
+    free(weights);
+    free(dims);
+    free(weightDims);
+    free(sumDims);
+    free(sumWeights);
+    if(!loaded) {
+        unloadNetworkFromGPU();
+    }
+};
+void Network::print() {
+    for(int layer = 0; layer < dimsLength; layer++) {
+        std::cout << "Layer " << layer+1 << ":" << std::endl;
+        for(int neuron = 0; neuron < dims[layer]; neuron++) {
+            std::cout << "\tNeuron " << neuron+1 << ":" << std::endl;
+            std::cout << "\t\tBias: " << biases[sumDims[layer] + neuron] << ":" << std::endl;
+            if(layer < (dimsLength-1)) {
+                std::cout << "\t\tWeights: " << std::endl;
+                for(int weight = 0; weight < dims[layer+1]; weight++) {
+                    std::cout << "\t\t\tWeight " << weight+1 << ": " << weights[sumWeights[layer] + dims[layer+1]*neuron + weight] << ":" << std::endl;
                 }
             }
         }
-        void save() {
-            FILE * file = fopen("dimsLength", "wb");
-            fwrite(&dimsLength, sizeof(int), 1, file);
-            fclose(file);
+    }
+};
+void Network::save() {
+    FILE * file = fopen("dimsLength", "wb");
+    fwrite(&dimsLength, sizeof(int), 1, file);
+    fclose(file);
 
-            file = fopen("dims", "wb");
-            fwrite(dims, sizeof(int), dimsLength, file);
-            fclose(file);
+    file = fopen("dims", "wb");
+    fwrite(dims, sizeof(int), dimsLength, file);
+    fclose(file);
 
-            file = fopen("biases", "wb");
-            fwrite(biases, sizeof(float), totalNNSize, file);
-            fclose(file);
+    file = fopen("biases", "wb");
+    fwrite(biases, sizeof(float), totalNNSize, file);
+    fclose(file);
 
-            file = fopen("weights", "wb");
-            fwrite(weights, sizeof(float), totalWeights, file);
-            fclose(file);
-        }
-        void read() {
-            //fread(data[i], sizeof(data[i][0]), ny, file);
-            
-            FILE * file = fopen("dimsLength", "wb");
-            fread(&dimsLength, sizeof(int), 1, file);
-            fclose(file);
+    file = fopen("weights", "wb");
+    fwrite(weights, sizeof(float), totalWeights, file);
+    fclose(file);
+};
+void Network::read() {
+    //fread(data[i], sizeof(data[i][0]), ny, file);
+    std::cout << "1" << std::endl;
+    FILE * file = fopen("dimsLength", "rb");
+    fread(&dimsLength, sizeof(int), 1, file);
+    fclose(file);
 
-            dims = (int *) malloc(dimsLength * sizeof(int));
-            file = fopen("dims", "wb");
-            fwrite(dims, sizeof(int), dimsLength, file);
-            fclose(file);
+    std::cout << "2" << std::endl;
+    dims = (int *) malloc(dimsLength * sizeof(int));
+    file = fopen("dims", "rb");
+    fread(dims, sizeof(int), dimsLength, file);
+    fclose(file);
 
-            // This initializes the rest of the Network class so I can use totalNNSize and totalWeights in the next lines.
-            initAll();
+    // This initializes the rest of the Network class so I can use totalNNSize and totalWeights in the next lines.
+    std::cout << "3" << std::endl;
+    initAll();
 
-            file = fopen("biases", "wb");
-            fwrite(biases, sizeof(float), totalNNSize, file);
-            fclose(file);
+    std::cout << "4" << std::endl;
+    file = fopen("biases", "rb");
+    fread(biases, sizeof(float), totalNNSize, file);
+    fclose(file);
 
-            file = fopen("weights", "wb");
-            fwrite(weights, sizeof(float), totalWeights, file);
-            fclose(file);
-        }
+    std::cout << "5" << std::endl;
+    file = fopen("weights", "rb");
+    fread(weights, sizeof(float), totalWeights, file);
+    fclose(file);
+    std::cout << "6" << std::endl;
 };
 
 
 int main() {
-    int dims[] = {2, 3};
-    float * biases = (float *) calloc(5, sizeof(float));
-    float * weights = (float *) calloc(6, sizeof(float));
-    weights[0] = 0.25;
-    weights[1] = 0.5;
-    weights[2] = 0.75;
-    weights[3] = 0.33;
-    weights[4] = 0.66; 
-    weights[5] = 1;
-    Network test = Network(2, dims);
-    test.biases = biases;
-    test.weights = weights;
+    // int dims[] = {2, 3};
+    // float * biases = (float *) calloc(5, sizeof(float));
+    // float * weights = (float *) calloc(6, sizeof(float));
+    // weights[0] = 0.25;
+    // weights[1] = 0.5;
+    // weights[2] = 0.75;
+    // weights[3] = 0.33;
+    // weights[4] = 0.66; 
+    // weights[5] = 1;
+    // Network test = Network(2, dims);
+    // test.biases = biases;
+    // test.weights = weights;
+
+    Network test = Network(); // If no arguments are passed, it tries to read from a file.
     float passIn[] = {0.5, 1};
     test.loadNetworkToGPU();
     float * result = test.feedForward(passIn);
