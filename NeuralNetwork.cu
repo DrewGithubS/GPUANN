@@ -68,8 +68,29 @@ void Network::initAll() {
     biases = (float *) calloc(totalNNSize, sizeof(float));
     weights = (float *) calloc(totalWeights, sizeof(float));
 };
+float Network::lazyLog(float num) {
+    while(num > 1) {
+        num /= 10;
+    }
+    return num;
+}
 void Network::randomize() {
+    int seed = 2983475;
+    int bias = 3248975;
+    int multiplier = 19353;
+    int modular = 100000;
+    for(int layer = 0; layer < dimsLength; layer++) {
+        seed += dims[layer] * (layer+1);
+    }
 
+    for(int neuron = 0; neuron < totalNNSize; neuron++) {
+        biases[neuron] = (lazyLog((float) seed)*2)-1;
+        seed = (seed*multiplier + bias)%modular;
+    }
+    for(int weight = 0; weight < totalWeights; weight++) {
+        weights[weight] = (lazyLog((float) seed)*2)-1;
+        seed = (seed*multiplier + bias)%modular;
+    }
 };
 void Network::loadNetworkToGPU() {
     cudaMalloc(&deviceBiases, totalNNSize * sizeof(float));
@@ -199,26 +220,27 @@ void Network::read() {
 
 
 int main() {
-    // int dims[] = {2, 3};
-    // float * biases = (float *) calloc(5, sizeof(float));
-    // float * weights = (float *) calloc(6, sizeof(float));
-    // weights[0] = 0.25;
-    // weights[1] = 0.5;
-    // weights[2] = 0.75;
-    // weights[3] = 0.33;
-    // weights[4] = 0.66; 
-    // weights[5] = 1;
-    // Network test = Network(2, dims);
-    // test.biases = biases;
-    // test.weights = weights;
+    int dims[] = {2, 3};
+    float * biases = (float *) calloc(5, sizeof(float));
+    float * weights = (float *) calloc(6, sizeof(float));
+    weights[0] = 0.25;
+    weights[1] = 0.5;
+    weights[2] = 0.75;
+    weights[3] = 0.33;
+    weights[4] = 0.66; 
+    weights[5] = 1;
+    Network test = Network(2, dims);
+    test.biases = biases;
+    test.weights = weights;
 
-    Network test = Network(); // If no arguments are passed, it tries to read from a file.
+    // Network test = Network(); // If no arguments are passed, it tries to read from a file.
     float passIn[] = {0.5, 1};
     test.loadNetworkToGPU();
+    test.randomize(); // This does nothing to the result since the weights and biases were already loaded to the GPU.
     float * result = test.feedForward(passIn);
     test.unloadNetworkFromGPU(); // Delete should call unloadNetworkFromGPU, but I call it anyways.
     test.print();
-    test.save();
+    //test.save();
     std::cout << "Results: " << result[2] << " " << result[3] << " " << result[4] << std::endl;
     std::cout << result[2] << std::endl;
     std::cout << result[3] << std::endl;
