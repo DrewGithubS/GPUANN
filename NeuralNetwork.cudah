@@ -35,25 +35,26 @@ class Network {
         int * deviceSumWeights;        
 
         // Reads the network from a file.
-        Network() {};
+        Network();
         // Creates a new network, dimsLen is the amount of layers, neuronCountList is an array with the amount of neurons per layer.
-        Network(int dimsLen, int * neuronCountList) {};
+        // Even though this could probably be made to run faster, this is branchless and clear.
+        Network(int dimsLen, int * neuronCountList);
         // Initializes all the variables that aren't in the constructor, also used in read();
-        void initAll() {};
+        void initAll();
         // Randomizes all the weights and biases
-        void randomize() {};
+        void randomize();
         // Loads the needed files to the GPU, preparing for a feedforward.
-        void loadNetworkToGPU() {};
+        void loadNetworkToGPU();
         // Do the feedforward
-        float * feedForward(float input[]) {};
+        float * feedForward(float input[]);
         // Unload the memory from the GPU.
-        void unloadNetworkFromGPU() {};
+        void unloadNetworkFromGPU();
         // Delete the network from memory.
-        ~Network() {};
+        ~Network();
         // Print the network to console (Mostly used for debugging)
-        void print() {};
+        void print();
         // Save the network to a file.
-        void save() {};
+        void save();
         // Read the network from a file.
-        void read() {};
+        void read();
 };
