@@ -1,0 +1,59 @@
+class Network {
+    public:
+        // Threads per block on a 2060S
+        int THREADSPERBLOCK = 1024;
+        // If the network is loaded onto the GPU.
+        bool loaded = false;
+        // All the biases
+        float * biases;
+        // All the weights
+        float * weights;
+        // The dimensions of the network, neurons per layer array.
+        int * dims;
+        // The amount of weights per layer
+        int * weightDims;
+        // The amount of neurons before a layer summed up.
+        int * sumDims;
+        // The amount of weights before a layer summer up.
+        int * sumWeights;
+        // The amount of layers.
+        int dimsLength;
+        // Total amount of neurons.
+        int totalNNSize = 0;
+        // Total amount of weights.
+        int totalWeights = 0;
+
+        // The biases on the GPU
+        float * deviceBiases;
+        // The weights on the GPU
+        float * deviceWeights;
+        // The dims on the GPU
+        int * deviceDims;
+        // The sumDims on the GPU.
+        int * deviceSumDims;
+        // The sumWeights on the GPU.
+        int * deviceSumWeights;        
+
+        // Reads the network from a file.
+        Network() {};
+        // Creates a new network, dimsLen is the amount of layers, neuronCountList is an array with the amount of neurons per layer.
+        Network(int dimsLen, int * neuronCountList) {};
+        // Initializes all the variables that aren't in the constructor, also used in read();
+        void initAll() {};
+        // Randomizes all the weights and biases
+        void randomize() {};
+        // Loads the needed files to the GPU, preparing for a feedforward.
+        void loadNetworkToGPU() {};
+        // Do the feedforward
+        float * feedForward(float input[]) {};
+        // Unload the memory from the GPU.
+        void unloadNetworkFromGPU() {};
+        // Delete the network from memory.
+        ~Network() {};
+        // Print the network to console (Mostly used for debugging)
+        void print() {};
+        // Save the network to a file.
+        void save() {};
+        // Read the network from a file.
+        void read() {};
+};
