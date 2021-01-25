@@ -4,7 +4,8 @@
 __global__ void feedForwardLayer(float * values, float * biases, float * weights, int * dims, int * sumDims, int * sumWeights, int currentLayer) {
     /* This gets the 'index' of the thread. The thread id is the id of the thread in the thread block
        The blockDim is the amount of threads per block and the block id is the id of the block this thread is in
-    */ This basically gives the index of the thread so you can use it to access memory.
+       This basically gives the index of the thread so you can use it to access memory.
+    */
     const int index = blockDim.x * blockIdx.x + threadIdx.x;
 
     // If the thread index is less than the size of the array.
@@ -47,7 +48,9 @@ class Network {
             for(int layer = 0; layer < dimsLength; layer++) {
                 dims[layer] = neuronCountList[layer];
             }
-
+            initAll();
+        };
+        void initAll() {
             // Gets the total size of the network.
             for(int layer = 0; layer < dimsLength; layer++) {
                 totalNNSize += dims[layer];
@@ -80,7 +83,7 @@ class Network {
             // Initializes the weights and biases with a value of 0.
             biases = (float *) calloc(totalNNSize, sizeof(float));
             weights = (float *) calloc(totalWeights, sizeof(float));
-        };
+        }
         void loadNetworkToGPU() {
             cudaMalloc(&deviceBiases, totalNNSize * sizeof(float));
             cudaMalloc(&deviceWeights, totalWeights * sizeof(float));
@@ -161,9 +164,48 @@ class Network {
                 }
             }
         }
+        void save() {
+            FILE * file = fopen("dimsLength", "wb");
+            fwrite(&dimsLength, sizeof(int), 1, file);
+            fclose(file);
+
+            file = fopen("dims", "wb");
+            fwrite(dims, sizeof(int), dimsLength, file);
+            fclose(file);
+
+            file = fopen("biases", "wb");
+            fwrite(biases, sizeof(float), totalNNSize, file);
+            fclose(file);
+
+            file = fopen("weights", "wb");
+            fwrite(weights, sizeof(float), totalWeights, file);
+            fclose(file);
+        }
+        void read() {
+            //fread(data[i], sizeof(data[i][0]), ny, file);
+            
+            FILE * file = fopen("dimsLength", "wb");
+            fread(&dimsLength, sizeof(int), 1, file);
+            fclose(file);
+
+            dims = (int *) malloc(dimsLength * sizeof(int));
+            file = fopen("dims", "wb");
+            fwrite(dims, sizeof(int), dimsLength, file);
+            fclose(file);
+
+            // This initializes the rest of the Network class so I can use totalNNSize and totalWeights in the next lines.
+            initAll();
+
+            file = fopen("biases", "wb");
+            fwrite(biases, sizeof(float), totalNNSize, file);
+            fclose(file);
+
+            file = fopen("weights", "wb");
+            fwrite(weights, sizeof(float), totalWeights, file);
+            fclose(file);
+        }
 };
 
-/* Some sample code:
 
 int main() {
     int dims[] = {2, 3};
@@ -175,19 +217,19 @@ int main() {
     weights[3] = 0.33;
     weights[4] = 0.66; 
     weights[5] = 1;
-    Network * test = new Network(2, dims);
+    Network test = Network(2, dims);
     test.biases = biases;
     test.weights = weights;
     float passIn[] = {0.5, 1};
     test.loadNetworkToGPU();
     float * result = test.feedForward(passIn);
-    test.unloadNetworkFromGPU();
-    delete test; // Delete should call unloadNetworkFromGPU, but I call it anyways.
+    test.unloadNetworkFromGPU(); // Delete should call unloadNetworkFromGPU, but I call it anyways.
     test.print();
+    test.save();
     std::cout << "Results: " << result[2] << " " << result[3] << " " << result[4] << std::endl;
     std::cout << result[2] << std::endl;
     std::cout << result[3] << std::endl;
     std::cout << result[4] << std::endl;
     // Expected outputs: 0.455, 0.91, 1.375
 }
-*/
+
