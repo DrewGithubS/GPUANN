@@ -22,17 +22,25 @@ class Network {
         int totalNNSize = 0;
         // Total amount of weights.
         int totalWeights = 0;
+        // The learning rate of the network
+        float learningRate;
 
+        // The changes that need to be made to the values 
+        float * deviceDeltaValues;
         // The biases on the GPU
         float * deviceBiases;
+        // The changes that need to be made to the biases
+        float * deviceDeltaBiases;
         // The weights on the GPU
         float * deviceWeights;
+        // The changes that need to be made to the weights
+        float * deviceDeltaWeights;
         // The dims on the GPU
         int * deviceDims;
         // The sumDims on the GPU.
         int * deviceSumDims;
         // The sumWeights on the GPU.
-        int * deviceSumWeights;        
+        int * deviceSumWeights;
 
         // Reads the network from a file.
         Network();
@@ -46,8 +54,10 @@ class Network {
         void randomize();
         // Loads the needed files to the GPU, preparing for a feedforward.
         void loadNetworkToGPU();
-        // Do the feedforward
-        float * feedForward(float input[]);
+        // Do the feedforward on the GPU
+        float * feedForwardGPU(float input[]);
+        // Do the feedforward on the CPU
+        float * feedForwardCPU(float input[]);
         // Unload the memory from the GPU.
         void unloadNetworkFromGPU();
         // Delete the network from memory.
