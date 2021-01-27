@@ -20,10 +20,58 @@ __global__ void feedForwardLayer(float * values, float * biases, float * weights
     }
 };
 
+__global__ void getBackPropDeltas(float * deltaValues, float * deltaBiases, float * deltaWeights, float * values, float * weights, int * dims, int * sumDims, int * sumWeights, int layer) {
+    /* This gets the 'index' of the thread. The thread id is the id of the thread in the thread block
+       The blockDim is the amount of threads per block and the block id is the id of the block this thread is in
+       This basically gives the index of the thread so you can use it to access memory.
+    */
+    int neuron = blockDim.x * blockIdx.x + threadIdx.x;
+
+    // If the thread index is less than the size of the array.
+    if(neuron < dims[layer]) {
+        neuron += sumDims[layer];
+        deltaValues[neuron] = 0;
+        for(int weight = sumDims[layer-1]; weight < sumDims[layer]; weight++) {
+            deltaWeights[sumWeights[layer-1] + dims[layer]*(weight-sumDims[layer-1]) + neuron] = values[weight] * values[sumDims[layer] + neuron] * learningRate;
+            deltaValues[neuron] += weights[sumWeights[layer-1] + dims[layer]*(weight-sumDims[layer-1]) + neuron] * deltaValues[weight] * learningRate;
+        }
+        deltaBiases[neuron] = deltaValues;
+    }
+};
+
+__global__ void applyDeltaWeights(float * deltaWeights, float * weights, int totalWeights) {
+    /* This gets the 'index' of the thread. The thread id is the id of the thread in the thread block
+       The blockDim is the amount of threads per block and the block id is the id of the block this thread is in
+       This basically gives the index of the thread so you can use it to access memory.
+    */
+    int weight = blockDim.x * blockIdx.x + threadIdx.x;
+
+    // If the thread index is less than the size of the array.
+    if(weight < totalWeights) {
+        weights[weight] += deltaWeights[weight];
+    }
+};
+
+__global__ void applyDeltaBiases(float * deltaBiases, float * biases, int totalNNSize) {
+    /* This gets the 'index' of the thread. The thread id is the id of the thread in the thread block
+       The blockDim is the amount of threads per block and the block id is the id of the block this thread is in
+       This basically gives the index of the thread so you can use it to access memory.
+    */
+    int bias = blockDim.x * blockIdx.x + threadIdx.x;
+
+    // If the thread index is less than the size of the array.
+    if(bias < totalNNSize) {
+        biases[bias] += deltaBiases[bias];
+    }
+};
+
 Network::Network() {
     read();
 };
-Network::Network(int dimsLen, int * neuronCountList) {
+
+Network::Network(int dimsLen, int * neuronCountList, float learningRateInput) {
+    // Set the learning rate
+    learningRate = learningRateInput;
     // Sets dims and dimsLength
     dimsLength = dimsLen;
     dims = (int *) calloc(dimsLength, sizeof(int));
@@ -32,7 +80,12 @@ Network::Network(int dimsLen, int * neuronCountList) {
     }
     initAll();
 };
+
 void Network::initAll() {
+    // Makes the delta variables for backpropogation
+    float * deltaValues = (float *) malloc(totalNNSize * sizeof(float));
+    float * deltaBiases = (float *) malloc(totalNNSize * sizeof(float));
+    float * deltaWeights = (float *) malloc(totalWeights * sizeof(float));
     // Gets the total size of the network.
     totalNNSize = 0;
     for(int layer = 0; layer < dimsLength; layer++) {
@@ -68,6 +121,7 @@ void Network::initAll() {
     biases = (float *) calloc(totalNNSize, sizeof(float));
     weights = (float *) calloc(totalWeights, sizeof(float));
 };
+
 void Network::randomize() {
     srand(totalWeights);
     std::cout << "Randomizing biases... 0/" << totalNNSize <<std::endl;
@@ -80,7 +134,11 @@ void Network::randomize() {
         weights[weight] = (2*rand()/RAND_MAX)-1;
     }
 };
+
 void Network::loadNetworkToGPU() {
+    cudaMalloc(&deviceDeltaValues, totalNNSize * sizeof(float));
+    cudaMalloc(&deviceDeltaBiases, totalNNSize * sizeof(float));
+    cudaMalloc(&deviceDeltaWeights, totalWeights * sizeof(float));
     cudaMalloc(&deviceBiases, totalNNSize * sizeof(float));
     cudaMalloc(&deviceWeights, totalWeights * sizeof(float));
     cudaMalloc(&deviceDims, dimsLength * sizeof(int));
@@ -94,6 +152,7 @@ void Network::loadNetworkToGPU() {
     cudaMemcpy(deviceSumWeights, sumWeights, (dimsLength) * sizeof(int), cudaMemcpyHostToDevice);
     loaded = true;
 };
+
 float * Network::feedForwardGPU(float input[]) {
     // Creates a new, empty value array.
     float * values = (float *) calloc(totalNNSize, sizeof(float));
@@ -124,17 +183,32 @@ float * Network::feedForwardGPU(float input[]) {
     }
     return lastLayer;
 };
+
+void Network::backPropGPU(float expected[], float * result) {
+    for(int i = sumDims[dimsLength]; i < totalNNSize; i++) {
+        deltaValues[i] = result[i] - expected[i];
+        deltaBiases[i] = deltaValues * learningRate;
+    }
+
+    for(int layer = dimsLength; layer > 0; layer++) {
+        int dimGrid = (dims[layer] + THREADSPERBLOCK - 1)/THREADSPERBLOCK;
+        getBackPropDeltas <<< dimGrid, THREADSPERBLOCK >>> (deviceDeltaValues, deviceDeltaBiases, deviceDeltaWeights, deviceValues, deviceBiases, deviceDims, deviceSumDims, deviceSumWeights, layer);
+    }
+    dimGrid = (totalNNSize + THREADSPERBLOCK - 1)/THREADSPERBLOCK;
+    applyDeltaBiases <<< dimGrid, THREADSPERBLOCK >>> (deviceDeltaValues, deviceBiases, totalNNSize);
+    dimGrid = (totalWeights + THREADSPERBLOCK - 1)/THREADSPERBLOCK;
+    applyDeltaWeights <<< dimGrid, THREADSPERBLOCK >>> (deviceDeltaWeights, deviceWeights, totalWeights);
+
+}
+
 float * Network::feedForwardCPU(float input[]) {
     // Creates a new, empty value array.
-    std::cout << "TEST1" << std::endl;
     float * values = (float *) calloc(totalNNSize, sizeof(float));
     //std::cout << "CPU 1" << std::endl;
     // Puts the inputs into the values to be fed forward.
-    std::cout << "TEST2" << std::endl;
     for(int neuron = 0; neuron < dims[0]; neuron++) {
         values[neuron] = input[neuron];
     }
-    std::cout << "TEST3" << std::endl;
     for(int layer = 1; layer < dimsLength; layer++) {
         // This for loop wouldn't exist if this was for the GPU since each GPU thread gets a neuron.
         for(int neuron = 0; neuron < dims[layer]; neuron++) {
@@ -144,14 +218,57 @@ float * Network::feedForwardCPU(float input[]) {
             values[sumDims[layer] + neuron] += biases[sumDims[layer] + neuron];
         }
     }
-    std::cout << "TEST4" << std::endl;
     float * lastLayer = (float *) malloc(sizeof(float) * dims[dimsLength-1]);
     for(int neuron = sumDims[dimsLength-1]; neuron < totalNNSize; neuron++) {
         lastLayer[neuron - sumDims[dimsLength-1]] = values[neuron];
     }
-    std::cout << "TEST5" << std::endl;
     return lastLayer;
+};
+
+void Network::getBackPropDeltasCPU(float expected[], float * result) {
+    for(int i = sumDims[dimsLength]; i < totalNNSize; i++) {
+        deltaValues[i] = result[i] - expected[i];
+        deltaBiases[i] = deltaValues * learningRate;
+    }
+
+    for(int layer = dimsLength; layer > 0; layer++) {
+        for(int neuron = sumDims[layer]; neuron < sumDims[layer+1]; neuron++) {
+            for(int weight = sumDims[layer-1]; weight < sumDims[layer]; weight++) {
+                deltaWeights[sumWeights[layer-1] + dims[layer]*(weight-sumDims[layer-1]) + neuron] = values[weight] * values[sumDims[layer] + neuron] * learningRate;
+                deltaValues[neuron] += deltaWeights[sumWeights[layer-1] + dims[layer]*(weight-sumDims[layer-1]) + neuron] * deltaValues[weight] * learningRate;
+            }
+            deltaBiases[neuron] = deltaValues;
+        }
+    }
 }
+
+void Network::getBackPropDeltasCPU(float expected[], float * result) {
+    for(int i = sumDims[dimsLength]; i < totalNNSize; i++) {
+        deltaValues[i] = result[i] - expected[i];
+        deltaBiases[i] = deltaValues * learningRate;
+    }
+
+    for(int layer = dimsLength; layer > 0; layer++) {
+        for(int neuron = sumDims[layer]; neuron < sumDims[layer+1]; neuron++) {
+            for(int weight = sumDims[layer-1]; weight < sumDims[layer]; weight++) {
+                deltaWeights[sumWeights[layer-1] + dims[layer]*(weight-sumDims[layer-1]) + neuron] = values[weight] * values[sumDims[layer] + neuron] * learningRate;
+                deltaValues[neuron] += deltaWeights[sumWeights[layer-1] + dims[layer]*(weight-sumDims[layer-1]) + neuron] * deltaValues[weight] * learningRate;
+            }
+            deltaBiases[neuron] = deltaValues;
+        }
+    }
+}
+
+float * Network::backpropogateCPU(float expected[], float * result) {
+    getBackPropDeltasCPU(expected, result);
+    for(int neuron = 0; neuron < totalNNSize; neuron++) {
+        biases[neuron] += deltaBiases[neuron];
+    }
+    for(int weight = 0; weight < totalWeights; weight++) {
+        weights[weight] += deltaWeights;
+    }
+}
+
 void Network::unloadNetworkFromGPU() {
     cudaFree(deviceBiases);
     cudaFree(deviceWeights);
@@ -160,6 +277,7 @@ void Network::unloadNetworkFromGPU() {
     cudaFree(deviceSumWeights);
     loaded = false;
 };
+
 Network::~Network() {
     free(biases);
     free(weights);
@@ -171,6 +289,7 @@ Network::~Network() {
         unloadNetworkFromGPU();
     }
 };
+
 void Network::print() {
     for(int layer = 0; layer < dimsLength; layer++) {
         std::cout << "Layer " << layer+1 << ":" << std::endl;
@@ -186,6 +305,7 @@ void Network::print() {
         }
     }
 };
+
 void Network::save() {
     FILE * file = fopen("dimsLength", "wb");
     fwrite(&dimsLength, sizeof(int), 1, file);
@@ -203,6 +323,7 @@ void Network::save() {
     fwrite(weights, sizeof(float), totalWeights, file);
     fclose(file);
 };
+
 void Network::read() {
     //fread(data[i], sizeof(data[i][0]), ny, file);
     std::cout << "1" << std::endl;
@@ -265,33 +386,25 @@ float abValue(float num) {
 }
 
 int main() {
-    std::cout << "1" << std::endl;
-    int dims[] = {764, 1024, 1024, 500, 500, 5};
-    const int TIMESTOTEST = 2;
-    const int INPUTLAYERAMOUNT = 2;
+    int dims[] = {1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024};
+    const int TIMESTOTEST = 100;
+    const int INPUTLAYERAMOUNT = 1024;
     int dimsLength = sizeof(dims)/sizeof(dims[0]);
-    std::cout << "DimsLength: " << dimsLength << std::endl;
     float CPUSolutions[TIMESTOTEST];
     float GPUSolutions[TIMESTOTEST];
-    std::cout << "2" << std::endl;
     Network test = Network(dimsLength, dims);
-    std::cout << "3" << std::endl;
     test.randomize();
-    std::cout << "3.5" << std::endl;
-    //test.print();
-    std::cout << "4" << std::endl;
     test.loadNetworkToGPU();
-    std::cout << "5" << std::endl;
     float input[TIMESTOTEST][INPUTLAYERAMOUNT];
-    std::cout << "6" << std::endl;
-    Random random = Random();
-    float testing = random.getRandomFloat();
-    std::cout << "7" << std::endl;
+
+    srand(23452345);
+
     for(int i = 0; i < TIMESTOTEST; i++) {
         for(int j = 0; j < INPUTLAYERAMOUNT; j++) {
-            input[i][j] = random.getRandomFloat();
+            input[i][j] = 2*((float) rand() / (float) RAND_MAX) - 1;
         }
     }
+
     std::cout << "Starting CPU now." << std::endl;
     auto startCPU = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < TIMESTOTEST; i++) {
@@ -300,6 +413,7 @@ int main() {
         free(result);
     }
     auto stopCPU = std::chrono::high_resolution_clock::now();
+
     std::cout << "Starting GPU now." << std::endl;
     auto startGPU = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < TIMESTOTEST; i++) {
@@ -312,8 +426,6 @@ int main() {
     auto durationCPU = std::chrono::duration_cast<std::chrono::microseconds>(stopCPU - startCPU);
     auto durationGPU = std::chrono::duration_cast<std::chrono::microseconds>(stopGPU - startGPU);
 
-    
-
     std::cout << "The CPU took " << durationCPU.count() << " microseconds." << std::endl;
     std::cout << "The GPU took " << durationGPU.count() << " microseconds." << std::endl;
     int correct = 0;
@@ -321,5 +433,6 @@ int main() {
         correct += (abValue(CPUSolutions[i]/GPUSolutions[i]) > 0.95 && abValue(CPUSolutions[i]/GPUSolutions[i]) < 1.05);
         std::cout << GPUSolutions[i] << " " << CPUSolutions[i] << " " << abValue(CPUSolutions[i]/GPUSolutions[i]) << std::endl;
     }
+    
     std::cout << "The GPU got " << correct << " correct answer(s)." << std::endl;
 };
