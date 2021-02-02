@@ -73,7 +73,7 @@ Network::Network(int dimsLen, int * neuronCountList, float learningRateInput) {
     dims = (int *) malloc(dimsLength * sizeof(int));
     for(int layer = 0; layer < dimsLength; layer++) {
         dims[layer] = neuronCountList[layer];
-        std::cout << "Dims[" << layer << "]: " << dims[layer] << std::endl;
+        std::<< "Dims[" << layer << "]: " << dims[layer] << std::endl;
     }
     printf("Dimsptr: %p\n", dims);
     initAll();
@@ -183,16 +183,11 @@ float * Network::feedForwardGPU(float input[]) {
 void Network::backPropGPU(float expected[], float * result) {
     float * deltaBiasesTemp = (float *) calloc(totalNNSize, sizeof(float));
     for(int i = 0; i < dims[dimsLength-1]; i++) {;
-        std::cout << i << " " << sumDims[dimsLength-1] + i << std::endl;
         deltaBiasesTemp[sumDims[dimsLength-1] + i] = expected[i] - result[i];
-    }
-    for(int i = 0; i < totalNNSize; i++) {
-        std::cout << "DeltaBiases[i]: " << deltaBiasesTemp[i] << std::endl;
     }
     cudaMemcpy(deviceDeltaBiases, deltaBiasesTemp, totalNNSize * sizeof(float), cudaMemcpyHostToDevice);
     int dimGrid;
     for(int layer = dimsLength-1; layer > 0; layer--) {
-        std::cout << "LAYER: " << layer << std::endl;
         int amountOfNeurons = dims[layer] > dims[layer-1] ? dims[layer] : dims[layer-1];
         dimGrid = (amountOfNeurons + THREADSPERBLOCK - 1)/THREADSPERBLOCK;
         getBackPropDeltas <<< dimGrid, THREADSPERBLOCK >>> (deviceDeltaBiases, deviceDeltaWeights, deviceValues, deviceWeights, deviceDims, deviceSumDims, deviceSumWeights, layer);
@@ -204,9 +199,6 @@ void Network::backPropGPU(float expected[], float * result) {
 float * Network::feedForwardCPU(float input[]) {
     // Puts the inputs into the values to be fed forward.
     for(int neuron = 0; neuron < dims[0]; neuron++) {
-        std::cout << neuron << std::endl;
-        std::cout << input[neuron] << std::endl;
-        std::cout << values[neuron] << std::endl;
         values[neuron] = input[neuron];
     }
     for(int layer = 1; layer < dimsLength; layer++) {
@@ -311,7 +303,6 @@ void Network::save() {
 
 void Network::read() {
     //fread(data[i], sizeof(data[i][0]), ny, file);
-    std::cout << "1" << std::endl;
     FILE * file = fopen("dimsLength", "rb");
     fread(&dimsLength, sizeof(int), 1, file);
     fclose(file);
